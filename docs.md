@@ -1,0 +1,416 @@
+# Curate.ai API Documentation
+
+## Overview
+
+Curate.ai is a context structuring API for AI agents. It transforms messy multi-document input into clean, schema-locked JSON output.
+
+**Base URL:** `http://localhost:8000`
+
+## Authentication
+
+API key authentication is optional. When enabled, include your API key in the request header:
+
+```bash
+curl -X POST http://localhost:8000/v1/transform \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d @payload.json
+```
+
+Configure in `.env`:
+```bash
+REQUIRED_API_KEY=your-secret-api-key
+API_KEY_HEADER=X-API-Key
+```
+
+## Endpoints
+
+### POST /v1/transform
+
+Transform documents into structured JSON.
+
+**Request Body:**
+```json
+{
+  "documents": [
+    {
+      "id": "doc1",
+      "content": "Your document text here..."
+    }
+  ],
+  "task": "extract tasks with deadlines and priorities",
+  "schema": "tasks_v1"
+}
+```
+
+**Parameters:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `documents` | array | Yes | Array of document objects (max 20) |
+| `documents[].id` | string | Yes | Unique document identifier |
+| `documents[].content` | string | Yes | Document text (max ~4000 tokens) |
+| `task` | string | Yes | Description of what to extract |
+| `schema` | string | No | Output schema: `tasks_v1`, `summary_v1`, or `entities_v1` (default: `tasks_v1`) |
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "data": {
+    "tasks": [
+      {
+        "task": "Update API documentation",
+        "priority": "high",
+        "deadline": "2026-04-30",
+        "source": "doc1_chunk_0"
+      }
+    ],
+    "summary": "Meeting to discuss product launch and dashboard integration."
+  },
+  "meta": {
+    "chunks_used": 2,
+    "tokens_used": 389,
+    "docs_processed": 1,
+    "tokens_before_filter": 941,
+    "tokens_after_filter": 389,
+    "reduction_pct": 58.7
+  }
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | `success` or `error` |
+| `data` | object | Extracted data matching schema |
+| `data.tasks` | array | List of extracted tasks |
+| `data.tasks[].task` | string | Task description |
+| `data.tasks[].priority` | string | `low`, `medium`, or `high` |
+| `data.tasks[].deadline` | string|null | ISO date or null |
+| `data.tasks[].source` | string | Source chunk reference |
+| `data.summary` | string | Brief summary |
+| `meta` | object | Processing metadata |
+| `meta.chunks_used` | number | Chunks sent to LLM |
+| `meta.tokens_used` | number | Tokens in final request |
+| `meta.docs_processed` | number | Documents processed |
+| `meta.tokens_before_filter` | number | Tokens before BM25 filtering |
+| `meta.tokens_after_filter` | number | Tokens after filtering |
+| `meta.reduction_pct` | number | Percentage reduction (60-80% optimal) |
+
+### GET /health
+
+Health check endpoint.
+
+**Response:**
+```json
+{
+  "status": "healthy"
+}
+```
+
+### GET /v1/usage
+
+Get usage statistics (requires API key).
+
+**Response:**
+```json
+{
+  "total_requests": 150,
+  "requests_today": 45,
+  "requests_this_minute": 3
+}
+```
+
+## Output Schemas
+
+### tasks_v1 (Default)
+
+Extract actionable tasks with priorities and deadlines.
+
+```json
+{
+  "status": "success",
+  "data": {
+    "tasks": [
+      {
+        "task": "string",
+        "priority": "low|medium|high",
+        "deadline": "ISO date string or null",
+        "source": "doc_id_chunk_N"
+      }
+    ],
+    "summary": "string"
+  }
+}
+```
+
+### summary_v1
+
+Generate structured document summary.
+
+```json
+{
+  "status": "success",
+  "data": {
+    "summary": "string",
+    "key_points": ["string"]
+  }
+}
+```
+
+### entities_v1
+
+Extract named entities.
+
+```json
+{
+  "status": "success",
+  "data": {
+    "entities": [
+      {
+        "name": "string",
+        "type": "person|organization|date|location|other",
+        "source": "doc_id_chunk_N"
+      }
+    ]
+  }
+}
+```
+
+## Error Codes
+
+| HTTP Status | Code | Description |
+|-------------|------|-------------|
+| 400 | `VALIDATION_ERROR` | Invalid request format |
+| 400 | `DOCUMENT_LIMIT` | More than 20 documents |
+| 400 | `EMPTY_DOCUMENT` | Empty or whitespace-only content |
+| 401 | `MISSING_API_KEY` | API key required but not provided |
+| 401 | `INVALID_API_KEY` | Invalid API key |
+| 429 | `RATE_LIMIT_EXCEEDED` | Too many requests |
+| 500 | `PROCESSING_ERROR` | Internal processing failed |
+| 500 | `SCHEMA_MISMATCH` | LLM output didn't match schema |
+| 504 | `TIMEOUT` | Processing exceeded 15s limit |
+
+**Error Response Format:**
+```json
+{
+  "detail": {
+    "code": "PROCESSING_ERROR",
+    "message": "Processing failed: description"
+  }
+}
+```
+
+## Usage Examples
+
+### Example 1: Extract Tasks from Meeting Notes
+
+```bash
+curl -X POST http://localhost:8000/v1/transform \
+  -H "Content-Type: application/json" \
+  -d '{
+    "documents": [
+      {
+        "id": "meeting",
+        "content": "Meeting Minutes: Product Launch Sync\nDate: 2026-04-28\n\nMike: The API integration needs to be done by April 30th. That'\''s high priority.\n\nDavid: We need to schedule a call with Legal about compliance. That'\''s urgent.\n\nSarah: Action item for me: Schedule user testing sessions."
+      }
+    ],
+    "task": "extract tasks with deadlines and priorities",
+    "schema": "tasks_v1"
+  }' | jq
+```
+
+### Example 2: Process Multiple Documents
+
+```bash
+curl -X POST http://localhost:8000/v1/transform \
+  -H "Content-Type: application/json" \
+  -d '{
+    "documents": [
+      {"id": "doc1", "content": "..."},
+      {"id": "doc2", "content": "..."},
+      {"id": "doc3", "content": "..."}
+    ],
+    "task": "extract all action items",
+    "schema": "tasks_v1"
+  }' | jq
+```
+
+### Example 3: Extract Entities
+
+```bash
+curl -X POST http://localhost:8000/v1/transform \
+  -H "Content-Type: application/json" \
+  -d '{
+    "documents": [
+      {
+        "id": "article",
+        "content": "John Smith from Acme Corp announced the merger on January 15, 2026 in New York."
+      }
+    ],
+    "task": "extract people, organizations, and dates",
+    "schema": "entities_v1"
+  }' | jq
+```
+
+### Example 4: Generate Summary
+
+```bash
+curl -X POST http://localhost:8000/v1/transform \
+  -H "Content-Type: application/json" \
+  -d '{
+    "documents": [
+      {"id": "report", "content": "..."}
+    ],
+    "task": "summarize the key points",
+    "schema": "summary_v1"
+  }' | jq
+```
+
+### Example 5: Using with Python
+
+```python
+import httpx
+
+payload = {
+    "documents": [
+        {
+            "id": "meeting",
+            "content": "Meeting notes content..."
+        }
+    ],
+    "task": "extract tasks with deadlines",
+    "schema": "tasks_v1"
+}
+
+response = httpx.post("http://localhost:8000/v1/transform", json=payload)
+data = response.json()
+
+print(f"Tasks found: {len(data['data']['tasks'])}")
+print(f"Token reduction: {data['meta']['reduction_pct']}%")
+
+for task in data['data']['tasks']:
+    print(f"  - {task['task']} ({task['priority']})")
+```
+
+### Example 6: Check Token Reduction
+
+```bash
+python measure_reduction.py
+```
+
+Output:
+```
+doc                  | tokens_before | tokens_after | reduction | tasks_found
+--------------------------------------------------------------------------------
+meeting_notes.txt    |           941 |          389 |     58.7% |           4
+email_thread.txt     |           850 |          340 |     60.0% |           3
+```
+
+## Rate Limits
+
+| Tier | Requests/Minute | Requests/Day |
+|------|-----------------|--------------|
+| Default | 60 | 1000 |
+
+Configure in `auth.py`:
+```python
+RATE_LIMITS = {
+    "default": {"requests_per_minute": 60, "requests_per_day": 1000}
+}
+```
+
+## Hard Limits
+
+| Constraint | Value |
+|------------|-------|
+| Max documents per request | 20 |
+| Max document size | ~4,000 tokens |
+| Max processing time | 15 seconds |
+| Top chunks to LLM | 15 |
+| LLM calls per request | 1 |
+
+## Best Practices
+
+### 1. Write Specific Task Queries
+
+✅ Good:
+```json
+{
+  "task": "API documentation deadline Legal compliance press release"
+}
+```
+
+❌ Bad:
+```json
+{
+  "task": "extract tasks"
+}
+```
+
+Specific queries help BM25 filtering identify relevant chunks.
+
+### 2. Monitor Token Reduction
+
+Check `meta.reduction_pct` in responses:
+- **60-80%**: ✅ Optimal
+- **< 60%**: Consider raising BM25 threshold
+- **> 85%**: May be dropping relevant content
+
+### 3. Use Source Tracing for Debugging
+
+Each extracted item includes a `source` field:
+```json
+{
+  "task": "Update API docs",
+  "source": "doc1_chunk_0"
+}
+```
+
+This tells you exactly which document chunk produced each extraction.
+
+### 4. Handle Errors Gracefully
+
+```python
+try:
+    response = httpx.post(url, json=payload)
+    response.raise_for_status()
+    data = response.json()
+    
+    if data['status'] == 'success':
+        # Process results
+        pass
+    else:
+        # Handle error
+        print(f"Error: {data['detail']['message']}")
+        
+except httpx.HTTPStatusError as e:
+    print(f"HTTP Error: {e.response.status_code}")
+except httpx.RequestError as e:
+    print(f"Request failed: {e}")
+```
+
+### 5. Batch Related Documents
+
+Instead of multiple API calls, send related documents together:
+```json
+{
+  "documents": [
+    {"id": "email1", "content": "..."},
+    {"id": "email2", "content": "..."},
+    {"id": "meeting_notes", "content": "..."}
+  ],
+  "task": "extract all action items"
+}
+```
+
+The API will merge and deduplicate across all documents.
+
+## Support
+
+For issues or questions:
+- Check logs: `tail -f uvicorn.log`
+- Test endpoint: `curl http://localhost:8000/health`
+- Review token reduction: `python measure_reduction.py`

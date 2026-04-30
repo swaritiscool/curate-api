@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["status", "data", "meta"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "error"]
+    },
+    "data": {
+      "type": "object",
+      "required": ["summary", "key_points"],
+      "properties": {
+        "summary": { "type": "string" },
+        "key_points": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "required": ["chunks_used", "tokens_used", "docs_processed"],
+      "properties": {
+        "chunks_used": { "type": "integer" },
+        "tokens_used": { "type": "integer" },
+        "docs_processed": { "type": "integer" }
+      }
+    }
+  }
+}

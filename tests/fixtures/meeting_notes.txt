@@ -1,0 +1,19 @@
+Meeting Minutes: Product Launch Sync
+Date: 2026-04-28
+Participants: Sarah (PM), Mike (Eng), Elena (Design), David (Marketing)
+
+Sarah: Okay everyone, let's get started. We have two weeks until the launch of the new dashboard. Mike, how's the backend integration going?
+Mike: It's mostly done. We hit a small snag with the caching layer but it should be resolved by Friday. I need to finish the API documentation for the mobile team though.
+Sarah: Great. Mike, please ensure the API docs are updated and shared with the mobile team by EOD Thursday.
+Mike: Will do.
+Elena: From the design side, we've finalized the icons. I've uploaded them to Figma.
+Sarah: Elena, can you send the direct link to David? He needs them for the marketing materials.
+Elena: Sure, I'll send that link to David right after this meeting.
+David: Thanks, Elena. Marketing-wise, we're ready to go. I just need to finalize the press release.
+Sarah: David, you should also sync with the legal team to make sure the terminology in the press release is approved.
+David: Good point. I'll schedule a call with Legal for tomorrow morning.
+Sarah: Perfect. Also, we need a volunteer to set up the launch day war room on Slack.
+Elena: I can do that. I'll set it up and invite everyone by next Monday.
+Sarah: Thanks, Elena. Anything else? 
+Mike: Just a reminder that we have a scheduled maintenance this weekend.
+Sarah: Right. Let's make sure that's communicated clearly. Okay, thanks everyone!

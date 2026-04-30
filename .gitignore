@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+*.log
+.vscode/
+.idea/
+venv/
+.env.local
+sample_doco/
+curate-api-demo/
+test_inputs/

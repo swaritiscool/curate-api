@@ -1,0 +1,45 @@
+From: Sarah <sarah@curate.ai>
+Sent: Monday, April 27, 2026 9:00 AM
+To: Engineering Team <eng-team@curate.ai>
+Subject: Q3 Infrastructure Planning
+
+Hi Team,
+
+As we look ahead to Q3, we need to start planning our infrastructure upgrades. The current cluster is reaching 80% capacity during peak hours.
+
+Mike, can you pull the usage reports for the last 6 months? We need to see if the growth is linear or if there are specific spikes we need to account for.
+
+Also, someone needs to research the new AWS graviton instances. I've heard they offer better price-performance for our workload. Elena, maybe you can take a look at that?
+
+Lastly, we should probably schedule a dedicated brainstorming session for this.
+
+Thanks,
+Sarah
+
+---
+
+From: Mike <mike@curate.ai>
+Sent: Monday, April 27, 2026 10:30 AM
+To: Sarah <sarah@curate.ai>
+Subject: RE: Q3 Infrastructure Planning
+
+Hi Sarah,
+
+I'll get those reports to you by Wednesday.
+
+Regarding Graviton, I think that's a great idea. Elena is out this week, but I can ask Jason to start the initial research.
+
+Best,
+Mike
+
+---
+
+From: Sarah <sarah@curate.ai>
+Sent: Monday, April 27, 2026 11:15 AM
+To: Mike <mike@curate.ai>
+Subject: RE: Q3 Infrastructure Planning
+
+Sounds good. Mike, please also make sure to check if our current monitoring setup supports Graviton out of the box.
+
+Best,
+Sarah
