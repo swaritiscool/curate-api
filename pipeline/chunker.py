@@ -1,6 +1,41 @@
 from typing import List, Dict, Any
 import tiktoken
 
+# Pre-compile regex patterns for performance
+import re
+from functools import lru_cache
+
+# Regex patterns for document classification (compile once at module load)
+_REGEX_PATTERNS = {
+    'strong_task': re.compile(
+        r'\b(meeting|minutes|participants|attendees|action item|action items|'
+        r'agenda|sync|standup|retrospective|said|asked|replied|responded)\b',
+        re.IGNORECASE
+    ),
+    'task_verb': re.compile(
+        r'\b(send|schedule|follow up|confirm|update|create|review|complete|'
+        r'assign|check|coordinate|draft|ping|relay|chase|own|write|flag|contact)\b',
+        re.IGNORECASE
+    ),
+    'strong_ref': re.compile(
+        r'\b(runbook|specification|glossary|architecture|technical documentation|'
+        r'api reference|user guide|system design|infrastructure|deployment guide|'
+        r'table of contents|overview|introduction)\b',
+        re.IGNORECASE
+    ),
+    'ref_term': re.compile(
+        r'\b(technical|implementation|deployed|configured|service|microservice|'
+        r'kubernetes|docker|container|module|component|infrastructure|system|'
+        r'api|endpoint|authentication|authorization|database|cache|queue|worker|gateway)\b',
+        re.IGNORECASE
+    ),
+    'list_item': re.compile(r'^[-\*•]\s'),
+    'dialogue': re.compile(r':\s*\S'),
+}
+
+# Cache for token counts to avoid redundant encoding
+_TOKEN_CACHE = {}
+
 
 def classify_doc_type(content: str) -> str:
     """
@@ -131,15 +166,34 @@ def tokenize(text: str) -> List[str]:
     return tokens
 
 
-def count_tokens(text: str) -> int:
-    """Count tokens in text"""
+def count_tokens(text: str, doc_id: str = None) -> int:
+    """Count tokens in text with optional caching"""
+    # Use cache key if doc_id provided
+    if doc_id:
+        cache_key = (doc_id, len(text))
+        if cache_key in _TOKEN_CACHE:
+            return _TOKEN_CACHE[cache_key]
+    
     encoder = tiktoken.get_encoding("cl100k_base")
-    return len(encoder.encode(text))
+    token_count = len(encoder.encode(text))
+    
+    # Cache if doc_id provided
+    if doc_id:
+        _TOKEN_CACHE[(doc_id, len(text))] = token_count
+    
+    return token_count
 
 
-def count_chunks_tokens(chunks: List[Dict[str, Any]]) -> int:
+def count_chunks_tokens(chunks: List[Dict[str, Any]], recalculate: bool = False) -> int:
     """Count total tokens in a list of chunks"""
-    return sum(chunk.get("token_count", 0) for chunk in chunks)
+    total = 0
+    for chunk in chunks:
+        token_count = chunk.get("token_count")
+        # Use cached value if available, otherwise recalculate
+        if token_count is None or recalculate:
+            token_count = chunk.get("_tokens", count_tokens(chunk.get("text", "")))
+        total += token_count
+    return total
 
 
 def chunk_document(

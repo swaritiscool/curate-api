@@ -2,11 +2,14 @@ from typing import List, Dict, Any, Tuple
 from rank_bm25 import BM25Okapi
 import re
 
+# Pre-compile regex for BM25 tokenization (run once at module load)
+_BM25_CLEANER = re.compile(r'[^\w\s]')
+
 
 def tokenize_for_bm25(text: str) -> List[str]:
-    """Simple tokenization for BM25"""
+    """Simple tokenization for BM25 with pre-compiled regex"""
     text = text.lower()
-    text = re.sub(r'[^\w\s]', '', text)
+    text = _BM25_CLEANER.sub('', text)
     return text.split()
 
 
@@ -54,8 +57,9 @@ def score_chunks(
 def filter_chunks_bm25(
     chunks: List[Dict[str, Any]],
     query: str,
-    threshold: float = 0.1
-) -> List[Dict[str, Any]]:
+    threshold: float = 0.1,
+    return_scores: bool = False
+) -> List[Dict[str, Any]] | Tuple[List[Dict[str, Any]], List[float]]:
     """
     Filter chunks using BM25 scoring against query.
     FIX-1: Applies 2x stricter threshold to reference docs.
@@ -64,11 +68,14 @@ def filter_chunks_bm25(
         chunks: List of chunk dicts
         query: Query string for scoring
         threshold: Minimum score threshold
+        return_scores: If True, also return scores list
     
     Returns:
-        Filtered chunks above threshold
+        Filtered chunks above threshold, optionally with scores
     """
     if not chunks:
+        if return_scores:
+            return [], []
         return []
     
     bm25 = build_bm25_index(chunks)
@@ -88,12 +95,15 @@ def filter_chunks_bm25(
                 reference_filtered += 1
         
         if score >= chunk_threshold:
+            chunk['_score'] = score  # Store score for later ranking reuse
             filtered.append(chunk)
     
     # Debug logging for FIX-1
     if reference_chunks > 0:
         print(f"   FIX-1 Debug: {reference_chunks} reference chunks, {reference_filtered} filtered out ({reference_filtered/reference_chunks*100:.0f}%)")
     
+    if return_scores:
+        return filtered, scores
     return filtered
 
 

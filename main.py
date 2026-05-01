@@ -4,6 +4,24 @@ from typing import List, Dict, Any
 import asyncio
 import time
 import json
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Add file handler for time.log (only if not already added)
+time_handler = None
+for handler in logger.handlers:
+    if isinstance(handler, logging.FileHandler) and handler.baseFilename == 'time.log':
+        time_handler = handler
+        break
+
+if time_handler is None:
+    time_handler = logging.FileHandler('time.log')
+    time_handler.setLevel(logging.INFO)
+    time_format = logging.Formatter('%(asctime)s - %(message)s')
+    time_handler.setFormatter(time_format)
+    logger.addHandler(time_handler)
 
 from schemas.models import (
     TransformRequest,
@@ -15,7 +33,7 @@ from schemas.models import (
 from pipeline.chunker import chunk_documents, count_tokens, count_chunks_tokens
 from pipeline.filter import prefilter_chunks_with_stats
 from pipeline.ranker import rank_chunks
-from pipeline.extractor import call_llm, build_extract_prompt, parse_llm_response
+from pipeline.extractor import call_llm, build_extract_prompt, parse_llm_response, get_model
 from pipeline.postprocess import (
     postprocess_extraction,
     validate_against_schema,
@@ -46,6 +64,13 @@ app.add_middleware(
 async def startup_event():
     init_api_key()
 
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up httpx client on shutdown"""
+    from pipeline.extractor import cleanup_httpx_client
+    cleanup_httpx_client()
+
 MAX_DOCUMENTS = 20
 MAX_DOC_TOKENS = 4000
 MAX_LLM_CALLS = 1
@@ -74,6 +99,7 @@ async def transform(request: TransformRequest, req: Request):
     await validate_api_key(req)
     
     start_time = time.time()
+    logger.info(f"_pipeline_start - request_id={id(request)}")
     
     if len(request.documents) > MAX_DOCUMENTS:
         raise HTTPException(
@@ -112,7 +138,10 @@ async def transform(request: TransformRequest, req: Request):
             doc['doc_type'] = doc_type
             print(f"   Document '{doc['id']}': {doc_type}")
         
+        stage1_start = time.time()
         all_chunks = chunk_documents(docs_as_dicts, chunk_size=256, overlap=50)
+        stage1_time = time.time() - stage1_start
+        logger.info(f"stage1_chunking - time={stage1_time:.3f}s chunks={len(all_chunks)} request_id={id(request)}")
         print(f"   ✓ Created {len(all_chunks)} chunks")
         
         if not all_chunks:
@@ -122,17 +151,45 @@ async def transform(request: TransformRequest, req: Request):
             )
         
         # Stage 2: BM25 Pre-filtering
+        # Early exit for small documents (\u003c500 tokens) - BM25 overhead not worth it
+        stage2_start = time.time()
         print(f"\n📊 [Pipeline Stage 2/5] BM25 pre-filtering (query: '{request.task[:50]}...')")
-        filtered_chunks, tokens_before, tokens_after, reduction_pct = prefilter_chunks_with_stats(
-            all_chunks,
-            request.task,
-            bm25_threshold=3.0,
-            min_tokens=30
-        )
+        
+        from pipeline.chunker import count_chunks_tokens
+        total_tokens_before = count_chunks_tokens(all_chunks)
+        
+        if total_tokens_before < 500:
+            print(f"   🔍 Early exit: \u003c500 tokens, skipping BM25 filtering")
+            filtered_chunks = all_chunks
+            tokens_before = total_tokens_before
+            tokens_after = total_tokens_before
+            reduction_pct = 0.0
+        else:
+            # Dynamic BM25 threshold based on document count
+            doc_count = len(request.documents)
+            if doc_count <= 2:
+                bm25_threshold = 1.5
+                print(f"   🔍 Dynamic threshold: {bm25_threshold} (low doc count: {doc_count})")
+            elif doc_count <= 5:
+                bm25_threshold = 2.5
+                print(f"   🔍 Dynamic threshold: {bm25_threshold} (med doc count: {doc_count})")
+            else:
+                bm25_threshold = 3.0
+                print(f"   🔍 Dynamic threshold: {bm25_threshold} (high doc count: {doc_count})")
+            
+            filtered_chunks, tokens_before, tokens_after, reduction_pct = prefilter_chunks_with_stats(
+                all_chunks,
+                request.task,
+                bm25_threshold=bm25_threshold,
+                min_tokens=30
+            )
+        stage2_time = time.time() - stage2_start
+        logger.info(f"stage2_filtering - time={stage2_time:.3f}s tokens_before={tokens_before} tokens_after={tokens_after} reduction_pct={reduction_pct:.1f}% request_id={id(request)}")
         print(f"   ✓ Tokens: {tokens_before} → {tokens_after} ({reduction_pct}% reduction)")
         print(f"   ✓ Chunks: {len(all_chunks)} → {len(filtered_chunks)}")
         
         # Stage 3: Relevance Ranking
+        stage3_start = time.time()
         print(f"\n📊 [Pipeline Stage 3/5] Ranking chunks by relevance...")
         
         # Rank all chunks first
@@ -148,6 +205,8 @@ async def transform(request: TransformRequest, req: Request):
         doc_list = [{"id": str(doc.id), "content": str(doc.content), "token_count": count_tokens(str(doc.content))} 
                     for doc in request.documents]
         ranked_chunks = select_top_chunks_per_doc(ranked_chunks, doc_list, total_budget=TOP_CHUNKS_TO_LLM)
+        stage3_time = time.time() - stage3_start
+        logger.info(f"stage3_ranking - time={stage3_time:.3f}s chunks_selected={len(ranked_chunks)} request_id={id(request)}")
         
         if not ranked_chunks:
             ranked_chunks = all_chunks[:TOP_CHUNKS_TO_LLM]
@@ -160,7 +219,9 @@ async def transform(request: TransformRequest, req: Request):
         total_tokens = tokens_after
         
         # Stage 4: LLM Extraction
-        print(f"\n📊 [Pipeline Stage 4/5] Calling LLM (ministral-3:3b)...")
+        stage4_start = time.time()
+        model = get_model(request.schema_type)
+        print(f"\n📊 [Pipeline Stage 4/5] Calling LLM ({model})...")
         prompt = build_extract_prompt(ranked_chunks, request.task, request.schema_type)
         
         extraction_result = None
@@ -168,7 +229,9 @@ async def transform(request: TransformRequest, req: Request):
         
         while retry_count <= MAX_RETRIES:
             try:
-                llm_response = await call_llm(prompt, request.schema_type)
+                llm_start = time.time()
+                llm_response = await call_llm(prompt, request.schema_type, model=model)
+                llm_time = time.time() - llm_start
                 print(f"   ✓ LLM Response (attempt {retry_count + 1}): {llm_response[:200]}...")
                 
                 extraction_result = parse_llm_response(llm_response)
@@ -194,16 +257,23 @@ async def transform(request: TransformRequest, req: Request):
                         detail={"code": ErrorCode.SCHEMA_MISMATCH, "message": f"LLM output was not valid JSON after 1 retry. Raw: {llm_response[:200]}"}
                     )
         
+        stage4_time = time.time() - stage4_start
+        logger.info(f"stage4_llm - time={stage4_time:.3f}s llm_only={llm_time:.3f}s attempt={retry_count + 1} request_id={id(request)}")
+        
         # Stage 5: Post-processing
+        stage5_start = time.time()
         print(f"\n📊 [Pipeline Stage 5/5] Post-processing results...")
         processed = postprocess_extraction(
             extraction_result,
             ranked_chunks,
             request.schema_type
         )
+        stage5_time = time.time() - stage5_start
+        logger.info(f"stage5_postprocess - time={stage5_time:.3f}s tasks={len(processed.get('tasks', []))} request_id={id(request)}")
         print(f"   ✓ Extracted {len(processed.get('tasks', []))} tasks")
         
         processing_time = time.time() - start_time
+        logger.info(f"pipeline_complete - total_time={processing_time:.3f}s tokens={total_tokens} chunks={len(ranked_chunks)} request_id={id(request)}")
         if processing_time > MAX_PROCESSING_TIME:
             print(f"\n✗ TIMEOUT: Processing took {processing_time:.1f}s (limit: {MAX_PROCESSING_TIME}s)")
             raise HTTPException(
@@ -229,6 +299,7 @@ async def transform(request: TransformRequest, req: Request):
         
         print(f"\n✅ Pipeline completed in {processing_time:.2f}s")
         print(f"   Response: {len(ranked_chunks)} chunks, {total_tokens} tokens, {reduction_pct}% reduction\n")
+        logger.info(f"pipeline_summary - total_time={processing_time:.3f}s tokens={total_tokens} chunks={len(ranked_chunks)} reduction_pct={reduction_pct:.1f}% request_id={id(request)}")
         
         return response
         

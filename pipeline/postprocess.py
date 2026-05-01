@@ -120,6 +120,14 @@ def validate_against_schema(
     Returns:
         True if valid
     """
+    # Handle list directly (LLM sometimes returns list of items)
+    if isinstance(data, list):
+        if schema_type == "entities_v1":
+            # Entities should be object with entities array, not a list
+            return False
+        # Accept list for backward compatibility with tasks
+        return True
+    
     # Extract data field if full response is provided
     if "data" in data and isinstance(data["data"], dict):
         data = data["data"]
@@ -137,11 +145,62 @@ def validate_against_schema(
         return has_summary or has_points
         
     elif schema_type == "entities_v1":
-        # Accept various entity formats
-        return any(key in data for key in ["entities", "people", "organizations", "dates", "locations"])
+        # Accept entities array wrapped in {"entities": [...]}
+        has_entities = "entities" in data and isinstance(data.get("entities"), list)
+        if has_entities:
+            return True
+        # Also accept list directly (LLM returned list of entities) - will be normalized
+        if isinstance(data, list):
+            return True
+        return False
     
     # Default: accept any dict
     return isinstance(data, dict)
+
+
+def normalize_entities(
+    entities: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """
+    Normalize entity format - map various fields to standard schema.
+    
+    Accepts:
+    - entities: [{"name": "...", "type": "...", "source": "..."}]
+    - entities: [{"entity": "...", "type": "...", "source": "..."}]
+    
+    Only keeps: name, type, source (and maps entity → name)
+    """
+    normalized = []
+    
+    for entity in entities:
+        normalized_entity = {}
+        
+        # Map name field (entity, name, entity_name, person, etc.)
+        if "name" in entity:
+            normalized_entity["name"] = entity["name"]
+        elif "entity" in entity:
+            normalized_entity["name"] = entity["entity"]
+        else:
+            continue  # Skip if no name
+        
+        # Map type field (only keep valid types)
+        if "type" in entity:
+            entity_type = entity["type"]
+            valid_types = ["person", "organization", "date", "location", "other"]
+            if entity_type in valid_types:
+                normalized_entity["type"] = entity_type
+            else:
+                normalized_entity["type"] = "other"
+        else:
+            normalized_entity["type"] = "other"
+        
+        # Map source field
+        if "source" in entity:
+            normalized_entity["source"] = entity["source"]
+        
+        normalized.append(normalized_entity)
+    
+    return normalized
 
 
 def postprocess_extraction(
@@ -172,9 +231,16 @@ def postprocess_extraction(
             extraction["tasks"] = attach_source_references(extraction["tasks"], chunks)
     
     elif schema_type == "entities_v1":
+        # Handle both {"entities": [...]} and raw list formats
         if "entities" in extraction:
+            extraction["entities"] = normalize_entities(extraction["entities"])
             extraction["entities"] = dedup_extractions(extraction["entities"], key_field="name")
             extraction["entities"] = attach_source_references(extraction["entities"], chunks)
+        elif isinstance(extraction, list):
+            # LLM returned raw list of entities - wrap in entities structure
+            extracted_entities = normalize_entities(extraction)
+            extracted_entities = dedup_extractions(extracted_entities, key_field="name")
+            extraction = {"entities": extracted_entities}
     
     return extraction
 

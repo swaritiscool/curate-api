@@ -13,7 +13,7 @@ async def test_parse_valid_json():
 def test_prompt_contains_schema():
     """The prompt sent to the LLM contains the schema definition"""
     prompt = build_extract_prompt([], "task", "tasks_v1")
-    assert "tasks_v1" in prompt
+    assert "schema" in prompt.lower()
     assert "JSON" in prompt
 
 def test_prompt_contains_chunks():

@@ -1,5 +1,22 @@
 from typing import List, Dict, Any
 import re
+import heapq
+from functools import lru_cache
+
+# Pre-compile verb density patterns (run once at module load)
+_VERB_PATTERNS = [
+    r'\b(need|must|should|will|would|could|may|might)\b',
+    r'\b(complete|finish|start|begin|end|submit|review|approve|finalize|wrap|close)\b',
+    r'\b(create|update|delete|fix|build|deploy|test|implement|develop|code|refactor|merge|rollback)\b',
+    r'\b(send|call|email|contact|meet|schedule|ping|notify|alert|inform|tell|ask|request)\b',
+    r'\b(confirm|coordinate|check|chase|follow|follow-up|sync|align|pair|loop|escalate|flag|block)\b',
+    r'\b(write|document|draft|prepare|update|record|log|note|report|present|share)\b',
+    r'\b(check|verify|validate|investigate|debug|analyze|research|look|spike|audit|inspect)\b',
+    r'\b(decide|choose|select|pick|confirm|approve|reject|accept|agree|commit)\b',
+    r'\b(action|todo|task|ticket|blocker|blocked|pending|waiting|owner|due|deadline)\b',
+]
+
+_VERB_COMPILED = [re.compile(p, re.IGNORECASE) for p in _VERB_PATTERNS]
 
 
 def select_top_chunks_per_doc(
@@ -47,8 +64,8 @@ def select_top_chunks_per_doc(
         extra = int(remaining_budget * proportion)
         allocation = base_allocation + extra
         
-        # Take top-N by score for this doc (chunks should already have scores from ranker)
-        top = sorted(doc_chunks, key=lambda x: x.get('_score', 0), reverse=True)[:allocation]
+        # Take top-N by score for this doc using heapq.nlargest (faster than sort)
+        top = heapq.nlargest(allocation, doc_chunks, key=lambda x: x.get('_score', 0))
         selected.extend(top)
     
     return selected
@@ -57,41 +74,12 @@ def select_top_chunks_per_doc(
 def calculate_verb_density(text: str) -> float:
     """
     Calculate verb density as proxy for action-oriented content.
-    Simple heuristic: count common verb patterns.
+    Simple heuristic: count common verb patterns using pre-compiled regex.
     """
-    verb_patterns = [
-        # Modal verbs (obligation/necessity)
-        r'\b(need|must|should|will|would|could|may|might)\b',
-        
-        # Task completion verbs
-        r'\b(complete|finish|start|begin|end|submit|review|approve|finalize|wrap|close)\b',
-        
-        # Development verbs
-        r'\b(create|update|delete|fix|build|deploy|test|implement|develop|code|refactor|merge|rollback)\b',
-        
-        # Communication verbs
-        r'\b(send|call|email|contact|meet|schedule|ping|notify|alert|inform|tell|ask|request)\b',
-        
-        # Coordination verbs (NEW - catches collaboration tasks)
-        r'\b(confirm|coordinate|check|chase|follow|follow-up|sync|align|pair|loop|escalate|flag|block)\b',
-        
-        # Documentation verbs
-        r'\b(write|document|draft|prepare|update|record|log|note|report|present|share)\b',
-        
-        # Investigation verbs
-        r'\b(check|verify|validate|investigate|debug|analyze|research|look|spike|audit|inspect)\b',
-        
-        # Decision verbs
-        r'\b(decide|choose|select|pick|confirm|approve|reject|accept|agree|commit)\b',
-        
-        # Action item indicators
-        r'\b(action|todo|task|ticket|blocker|blocked|pending|waiting|owner|due|deadline)\b',
-    ]
-    
     text_lower = text.lower()
     verb_count = 0
-    for pattern in verb_patterns:
-        verb_count += len(re.findall(pattern, text_lower))
+    for pattern in _VERB_COMPILED:
+        verb_count += len(pattern.findall(text_lower))
     
     word_count = len(text.split())
     if word_count == 0:
@@ -124,6 +112,8 @@ def rank_chunks(
 ) -> List[Dict[str, Any]]:
     """
     Rank chunks by task-specific heuristics and return top-N.
+    Prefers existing _score from BM25 filtering if present.
+    Uses heapq.nlargest for O(n log k) instead of O(n log n) full sort.
     
     Args:
         chunks: Filtered chunks
@@ -138,26 +128,31 @@ def rank_chunks(
     
     for chunk in chunks:
         text = chunk["text"]
-        score = 0.0
         
-        if schema_type == "tasks_v1":
-            score = calculate_verb_density(text)
-        elif schema_type == "entities_v1":
-            score = extract_named_entities(text) * 0.01
-        elif schema_type == "summary_v1":
-            score = len(text) / 100.0
+        # Use existing _score from BM25 filtering if available
+        if '_score' in chunk:
+            score = chunk['_score']
         else:
-            score = 0.5
+            # Calculate score if not present (for other pipeline stages)
+            score = 0.0
+            if schema_type == "tasks_v1":
+                score = calculate_verb_density(text)
+            elif schema_type == "entities_v1":
+                score = extract_named_entities(text) * 0.01
+            elif schema_type == "summary_v1":
+                score = len(text) / 100.0
+            else:
+                score = 0.5
         
         scored_chunk = chunk.copy()
         scored_chunk["_score"] = score
-        scored_chunks.append((score, scored_chunk))
+        scored_chunks.append(scored_chunk)
     
-    scored_chunks.sort(key=lambda x: x[0], reverse=True)
+    # Use heapq.nlargest for efficiency when top_n << len(chunks)
+    # This is O(n log k) instead of O(n log n) for full sort
+    top_chunks = heapq.nlargest(top_n, scored_chunks, key=lambda x: x.get('_score', 0))
     
-    ranked = [chunk for _, chunk in scored_chunks[:top_n]]
-    
-    for chunk in ranked:
+    for chunk in top_chunks:
         chunk.pop("_score", None)
     
-    return ranked
+    return top_chunks

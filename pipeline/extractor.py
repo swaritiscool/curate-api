@@ -12,6 +12,37 @@ except ImportError:
 
 load_dotenv()
 
+# Model configuration - schema-based model selection
+_MODEL_TASKS = os.getenv("MODEL_TASKS", "ministral-3:3b")
+_MODEL_SUMMARY = os.getenv("MODEL_SUMMARY", "minimax-m2.5")
+_MODEL_ENTITIES = os.getenv("MODEL_ENTITIES", "qwen3.5")
+
+# Global httpx client for connection pooling
+_httpx_client = None
+
+
+def get_model(schema_type: str) -> str:
+    """Get model for schema type"""
+    if schema_type == "tasks_v1":
+        return _MODEL_TASKS
+    elif schema_type == "summary_v1":
+        return _MODEL_SUMMARY
+    elif schema_type == "entities_v1":
+        return _MODEL_ENTITIES
+    else:
+        return _MODEL_TASKS
+
+
+def get_httpx_client() -> httpx.AsyncClient:
+    """Get or create shared httpx client with connection pooling"""
+    global _httpx_client
+    if _httpx_client is None:
+        _httpx_client = httpx.AsyncClient(
+            timeout=30.0,
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)
+        )
+    return _httpx_client
+
 
 def get_llm_api_key() -> Optional[str]:
     """Get LLM API key from environment"""
@@ -23,148 +54,63 @@ def get_ollama_base_url() -> str:
     return os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 
+def trim_chunk_text(text: str, max_words: int = 100) -> str:
+    """Trim chunk text for prompt (reduces token count by 30-40%)"""
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    keep_start = int(max_words * 0.7)
+    keep_end = int(max_words * 0.3)
+    return ' '.join(words[:keep_start]) + ' ... ' + ' '.join(words[-keep_end:])
+
+
 def build_extract_prompt(
     chunks: List[Dict[str, Any]],
     task: str,
-    schema_type: str
+    schema_type: str,
+    trim_chunks: bool = True
 ) -> str:
-    """
-    Build the extraction prompt with chunks and schema.
-    
-    Args:
-        chunks: Top-ranked chunks
-        task: Task description
-        schema_type: Target schema type
-    
-    Returns:
-        Formatted prompt for LLM
-    """
-    chunk_texts = "\n\n---\n\n".join([
-        f"[Source: {chunk['doc_id']}_chunk_{chunk['chunk_id']}]\n{chunk['text']}"
-        for chunk in chunks
-    ])
+    """Build extraction prompt with optional chunk trimming for token reduction."""
+    if trim_chunks:
+        chunk_texts = "\n\n---\n\n".join([
+            f"[Source: {chunk['doc_id']}_chunk_{chunk['chunk_id']}]\n{trim_chunk_text(chunk['text'], 100)}"
+            for chunk in chunks
+        ])
+    else:
+        chunk_texts = "\n\n---\n\n".join([
+            f"[Source: {chunk['doc_id']}_chunk_{chunk['chunk_id']}]\n{chunk['text']}"
+            for chunk in chunks
+        ])
     
     schema_examples = {
-        "tasks_v1": '''{
-  "tasks": [
-    {
-      "task": "Complete the report",
-      "priority": "high",
-      "deadline": "2026-05-01",
-      "source": "doc_0_chunk_0"
-    }
-  ],
-  "summary": "Brief summary of extracted tasks"
-}''',
-        "summary_v1": '''{
-  "summary": "Brief summary",
-  "key_points": ["Point 1", "Point 2"]
-}''',
-        "entities_v1": '''{
-  "entities": [
-    {
-      "name": "John Smith",
-      "type": "person",
-      "source": "doc_0_chunk_0"
-    }
-  ]
-}'''
+        "tasks_v1": '{"tasks": [{"task": "Complete report", "priority": "high", "deadline": "May 5", "source": "doc1"}], "summary": "Summary"}',
+        "summary_v1": '{"summary": "Brief summary", "key_points": ["Point 1"]}',
+        "entities_v1": '{"entities": [{"name": "John Smith", "type": "person", "source": "doc1_chunk_2"}, {"name": "Acme Corp", "type": "organization", "source": "doc1_chunk_5"}]}'
     }
     
     example_output = schema_examples.get(schema_type, '{}')
-
-    # FIX-3 & FIX-4: Enhanced prompt with implicit task detection and better priority calibration
-    prompt = f"""You are a JSON extractor. Return ONLY valid JSON matching the EXACT schema below.
-
-CRITICAL RULES:
-1. Return ONLY the data object - NO wrapper, NO "status", NO "meta"
-2. NO markdown, NO code blocks, NO explanations
-3. Do NOT wrap in ```json or ``` - just raw JSON
-4. Use EXACT field names from schema: "tasks", "summary" (for tasks_v1)
-5. Include source for each item (e.g., "doc_0_chunk_0")
-6. Do NOT invent new field names - use the schema exactly
-
-FIX-3: OWNER EXTRACTION (MANDATORY):
-When extracting tasks, always identify the owner if one is stated or clearly implied in the source text.
-Prefix the task description with the owner's first name followed by a colon, e.g.:
-  - "Marcus: send calendar invite for QA sync"
-  - "Dev: ping Rachel in Slack"
-  - "Unassigned: update documentation"
-
-If no owner is identifiable from the chunk, prefix with "Unassigned:".
-Never omit the owner prefix. Unassigned is a valid and expected value.
-
-IMPLICIT TASK DETECTION (CRITICAL):
-Extract tasks even when they are NOT written as direct commands. Look for these patterns:
-
-1. **Conditional tasks** - "if X happens, Y should do Z"
-   Example: "If the API latency exceeds 500ms, Vikram needs to investigate"
-   → Extract: "Vikram: investigate if API latency exceeds 500ms"
-
-2. **Decision-based tasks** - "we decided to X" or "X will do Y"
-   Example: "We decided that Sandra will draft the API changelog"
-   → Extract: "Sandra: draft the API changelog"
-
-3. **Dependency tasks** - "waiting on X" or "blocked until Y"
-   Example: "The mobile fix is blocked until Rachel completes the audit"
-   → Extract: "Rachel: complete the audit"
-
-4. **Side-effect tasks** - mentioned as consequences of other actions
-   Example: "After the deployment, James should verify the metrics"
-   → Extract: "James: verify the metrics after deployment"
-
-5. **Question-based tasks** - "Can X do Y?" or "Who will handle Z?"
-   Example: "Can Marcus send the calendar invite?"
-   → Extract: "Marcus: send calendar invite"
-
-Do NOT limit extraction to imperative sentences. Extract ANY action that needs to be taken, regardless of how it's phrased.
-
-FIX-4: PRIORITY CLASSIFICATION RUBRIC (NON-NEGOTIABLE):
-Follow these rules exactly. Pay special attention to blocking dependencies.
-
-**HIGH priority** — task meets ONE or MORE of these conditions:
-  - Explicitly marked as "urgent", "critical", "ASAP", "blocker", or "blocking" in source text
-  - Has a deadline within 72 hours of the document date
-  - **BLOCKING DEPENDENCY**: Another task cannot start until this one is done
-    - Look for: "blocked on", "waiting for", "depends on", "until X is done"
-    - Example: "Mobile fix blocked until Rachel completes audit" → Rachel's audit is HIGH
-  - Is tied to a company OKR, executive decision, or leadership waiting on it
-  - Involves a vendor, contract, or external dependency with a hard deadline
-  - Related to production incidents, outages, security issues, or compliance
-
-**MEDIUM priority** — task meets THESE conditions (and NONE of the HIGH conditions):
-  - Has a specific named deadline more than 72 hours away
-  - Does not block other tasks (nothing is waiting on this)
-  - Is internally owned with no external dependency
-  - Part of current sprint but not marked urgent
-  - **CONDITIONAL TASKS**: Tasks that depend on a condition being met
-    - Example: "If latency is high, investigate" → MEDIUM (condition may not trigger)
-
-**LOW priority** — task meets THESE conditions:
-  - No explicit deadline stated in source text
-  - Is a coordination, notification, or reminder action (e.g., "ping", "check with", "send link", "confirm")
-  - Does not block any other task
-  - Documentation updates without urgency
-  - "Nice to have" or "when time permits"
-  - Follow-up actions with no hard deadline
-
-FIX-4: DEADLINE EXTRACTION RULES:
-- Only extract a deadline if one is EXPLICITLY stated in the source text
-- If no deadline is mentioned, set deadline to null
-- NEVER infer, estimate, or hallucinate a deadline
-- Common explicit formats: "by April 30", "due May 2", "deadline: 2026-05-01", "before Friday"
-- Conditional deadlines are NOT deadlines: "if needed by Friday" → null
-
-TASK: {task}
-
-DOCUMENT CHUNKS:
-{chunk_texts}
-
-EXACT OUTPUT SCHEMA (MUST MATCH THIS):
-{example_output}
-
-Return ONLY the JSON object above with your extracted data. Apply implicit task detection and priority rubric strictly. Start with {{ and end with }}."""
-
+    
+    prompt = (
+        "You are a JSON extractor. Return ONLY valid JSON matching schema.\n"
+        "CRITICAL: No wrapper, NO markdown, NO extra fields.\n"
+        f"TASK: {task}\n\n"
+        "CHUNKS:\n"
+        f"{chunk_texts}\n\n"
+        "OUTPUT:\n"
+        f"{example_output}\n\n"
+        "IMPORTANT: For entities_v1, return entities with name/type/source, NOT tasks."
+    )
+    
+    if schema_type == "entities_v1":
+        prompt += (
+            "\n\nSTRICT RULES FOR ENTITIES:\n"
+            "- Return ONLY valid JSON with entities array: {\"entities\": [{\"name\": \"...\", \"type\": \"person|organization|date|location|other\", \"source\": \"...\"}]}\n"
+            "- DO NOT return: task, task_id, description, priority, deadline, owner, notes, status, entity (use name), or raw list\n"
+            "- DO NOT return tasks, issues, action items, tickets, or bugs\n"
+            "- ONLY extract named entities like people, companies, dates, places\n"
+            "- Valid types: person, organization, date, location, other"
+        )
+    
     return prompt
 
 
@@ -174,21 +120,10 @@ async def call_llm(
     api_key: Optional[str] = None,
     model: str = None
 ) -> str:
-    # Auto-select model based on schema type
+    """Call LLM API for extraction with auto model selection."""
     if model is None:
-        model = "ministral-3:3b"
-    """
-    Call LLM API for extraction.
+        model = get_model(schema_type)
     
-    Args:
-        prompt: Extraction prompt
-        schema_type: Target schema
-        api_key: API key (uses env if not provided)
-        model: Model to use
-    
-    Returns:
-        Raw LLM response text
-    """
     ollama_url = os.getenv("OLLAMA_BASE_URL")
     
     if ollama_url and ("localhost" in ollama_url or "127.0.0.1" in ollama_url):
@@ -216,12 +151,10 @@ async def call_llm(
 async def call_ollama(
     prompt: str,
     base_url: str,
-    model: str = "gemma3:31b"
+    model: str = "ministral-3:3b"
 ) -> str:
     """Call Ollama API (OpenAI-compatible endpoint)"""
-    headers = {
-        "Content-Type": "application/json"
-    }
+    headers = {"Content-Type": "application/json"}
     
     payload = {
         "model": model,
@@ -230,21 +163,18 @@ async def call_ollama(
             {"role": "user", "content": prompt}
         ],
         "stream": False,
-        "options": {
-            "temperature": 0.0,
-            "num_predict": 2000
-        }
+        "options": {"temperature": 0.0, "num_predict": 2000}
     }
     
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            f"{base_url}/v1/chat/completions",
-            headers=headers,
-            json=payload
-        )
-        response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
+    client = get_httpx_client()
+    response = await client.post(
+        f"{base_url}/v1/chat/completions",
+        headers=headers,
+        json=payload
+    )
+    response.raise_for_status()
+    data = response.json()
+    return data["choices"][0]["message"]["content"]
 
 
 def call_ollama_cloud(
@@ -256,28 +186,14 @@ def call_ollama_cloud(
     if not OLLAMA_CLIENT_AVAILABLE:
         raise ImportError("ollama client not installed. Run: pip install ollama")
     
-    client = OllamaClient(
-        host="https://ollama.com",
-        headers={'Authorization': f'Bearer {api_key}'}
-    )
+    client = OllamaClient(host="https://ollama.com", headers={'Authorization': f'Bearer {api_key}'})
     
     messages = [
-        {
-            'role': 'system',
-            'content': 'You are a JSON extractor. Return ONLY valid JSON. No prose, no markdown.'
-        },
-        {
-            'role': 'user',
-            'content': prompt
-        }
+        {'role': 'system', 'content': 'You are a JSON extractor. Return ONLY valid JSON. No prose, no markdown.'},
+        {'role': 'user', 'content': prompt}
     ]
     
-    response = client.chat(
-        model=model,
-        messages=messages,
-        stream=False
-    )
-    
+    response = client.chat(model=model, messages=messages, stream=False)
     return response['message']['content']
 
 
@@ -287,10 +203,7 @@ async def call_openai(
     model: str = "gpt-4o-mini"
 ) -> str:
     """Call OpenAI API"""
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     
     payload = {
         "model": model,
@@ -302,15 +215,15 @@ async def call_openai(
         "max_tokens": 2000
     }
     
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers=headers,
-            json=payload
-        )
-        response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
+    client = get_httpx_client()
+    response = await client.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers=headers,
+        json=payload
+    )
+    response.raise_for_status()
+    data = response.json()
+    return data["choices"][0]["message"]["content"]
 
 
 async def call_anthropic(
@@ -329,32 +242,22 @@ async def call_anthropic(
         "model": model,
         "max_tokens": 2000,
         "system": "You are a JSON extractor. Return ONLY valid JSON. No prose, no markdown.",
-        "messages": [
-            {"role": "user", "content": prompt}
-        ]
+        "messages": [{"role": "user", "content": prompt}]
     }
     
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            "https://api.anthropic.com/v1/messages",
-            headers=headers,
-            json=payload
-        )
-        response.raise_for_status()
-        data = response.json()
-        return data["content"][0]["text"]
+    client = get_httpx_client()
+    response = await client.post(
+        "https://api.anthropic.com/v1/messages",
+        headers=headers,
+        json=payload
+    )
+    response.raise_for_status()
+    data = response.json()
+    return data["content"][0]["text"]
 
 
 def parse_llm_response(response: str) -> Dict[str, Any]:
-    """
-    Parse LLM response, stripping markdown if present.
-    
-    Args:
-        response: Raw LLM response
-    
-    Returns:
-        Parsed JSON dict
-    """
+    """Parse LLM response, stripping markdown if present."""
     cleaned = response.strip()
     
     if cleaned.startswith("```json"):
@@ -368,3 +271,19 @@ def parse_llm_response(response: str) -> Dict[str, Any]:
     cleaned = cleaned.strip()
     
     return json.loads(cleaned)
+
+
+def cleanup_httpx_client():
+    """Close the shared httpx client on shutdown"""
+    global _httpx_client
+    if _httpx_client is not None:
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(_httpx_client.aclose())
+            else:
+                asyncio.run(_httpx_client.aclose())
+        except Exception:
+            pass
+        _httpx_client = None
