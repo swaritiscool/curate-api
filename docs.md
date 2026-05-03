@@ -6,23 +6,6 @@ Curate.ai is a context structuring API for AI agents. It transforms messy multi-
 
 **Base URL:** `http://localhost:8000`
 
-## Authentication
-
-API key authentication is optional. When enabled, include your API key in the request header:
-
-```bash
-curl -X POST http://localhost:8000/v1/transform \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: your-api-key" \
-  -d @payload.json
-```
-
-Configure in `.env`:
-```bash
-REQUIRED_API_KEY=your-secret-api-key
-API_KEY_HEADER=X-API-Key
-```
-
 ## Endpoints
 
 ### POST /v1/transform
@@ -110,19 +93,6 @@ Health check endpoint.
 }
 ```
 
-### GET /v1/usage
-
-Get usage statistics (requires API key).
-
-**Response:**
-```json
-{
-  "total_requests": 150,
-  "requests_today": 45,
-  "requests_this_minute": 3
-}
-```
-
 ## Output Schemas
 
 ### tasks_v1 (Default)
@@ -186,12 +156,9 @@ Extract named entities.
 | 400 | `VALIDATION_ERROR` | Invalid request format |
 | 400 | `DOCUMENT_LIMIT` | More than 20 documents |
 | 400 | `EMPTY_DOCUMENT` | Empty or whitespace-only content |
-| 401 | `MISSING_API_KEY` | API key required but not provided |
-| 401 | `INVALID_API_KEY` | Invalid API key |
-| 429 | `RATE_LIMIT_EXCEEDED` | Too many requests |
 | 500 | `PROCESSING_ERROR` | Internal processing failed |
 | 500 | `SCHEMA_MISMATCH` | LLM output didn't match schema |
-| 504 | `TIMEOUT` | Processing exceeded 15s limit |
+| 504 | `TIMEOUT` | Processing exceeded timeout limit |
 
 **Error Response Format:**
 ```json
@@ -309,26 +276,13 @@ meeting_notes.txt    |           941 |          389 |     58.7% |           4
 email_thread.txt     |           850 |          340 |     60.0% |           3
 ```
 
-## Rate Limits
-
-| Tier | Requests/Minute | Requests/Day |
-|------|-----------------|--------------|
-| Default | 60 | 1000 |
-
-Configure in `auth.py`:
-```python
-RATE_LIMITS = {
-    "default": {"requests_per_minute": 60, "requests_per_day": 1000}
-}
-```
-
 ## Hard Limits
 
 | Constraint | Value |
 |------------|-------|
 | Max documents per request | 20 |
 | Max document size | ~4,000 tokens |
-| Max processing time | 15 seconds |
+| Max processing time | 60 seconds |
 | Top chunks to LLM | 15 |
 | LLM calls per request | 1 |
 

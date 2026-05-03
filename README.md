@@ -279,10 +279,6 @@ OLLAMA_BASE_URL=http://localhost:11434
 # Or use Anthropic
 # LLM_API_KEY=sk-ant-your-anthropic-key
 # USE_ANTHROPIC=true
-
-# API Authentication (optional)
-# REQUIRED_API_KEY=your-secret-api-key
-# API_KEY_HEADER=X-API-Key
 ```
 
 ### Tuning BM25 Filtering

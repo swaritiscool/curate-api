@@ -1,14 +1,12 @@
 import pytest
 import json
 from fastapi.testclient import TestClient
-from auth import validate_api_key
 import pipeline.extractor
 
 @pytest.fixture
 def app():
-    """Create app instance with auth override"""
+    """Create app instance"""
     from main import app as main_app
-    main_app.dependency_overrides[validate_api_key] = lambda: "test-api-key"
     yield main_app
     main_app.dependency_overrides = {}
 

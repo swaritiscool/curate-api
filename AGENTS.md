@@ -15,7 +15,7 @@ Curate.ai is a **document transformation API** for AI agents. It takes messy mul
 ```
 /home/imperinovus/Projects/API-Tools/Curate/
 ├── main.py                      # FastAPI app, /v1/transform endpoint
-├── auth.py                      # API key auth, rate limiting, usage tracking
+├── auth.py                      # Simplified error codes (auth removed)
 ├── requirements.txt             # Python dependencies
 ├── .env                         # LLM_API_KEY, OLLAMA_BASE_URL=ollama-cloud
 ├── .env.example                 # Template for .env
@@ -231,8 +231,6 @@ Look for 60-80% reduction. If lower, increase `bm25_threshold` in `main.py`.
 | `MODEL_TASKS` | Model for tasks extraction | `ministral-3:3b` (default) |
 | `MODEL_SUMMARY` | Model for summary extraction | `minimax-m2.5` (default) |
 | `MODEL_ENTITIES` | Model for entities extraction | `qwen3.5` (default) |
-| `REQUIRED_API_KEY` | Enable API key auth (optional) | `secret-key` |
-| `API_KEY_HEADER` | Header name for API key | `X-API-Key` |
 
 ### Recommended Model Configurations
 

@@ -39,12 +39,7 @@ from pipeline.postprocess import (
     validate_against_schema,
     build_response
 )
-from auth import (
-    validate_api_key,
-    init_api_key,
-    get_usage_stats,
-    ErrorCode
-)
+from auth import ErrorCode
 
 app = FastAPI(
     title="Curate.ai",
@@ -62,7 +57,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    init_api_key()
+    pass
 
 
 @app.on_event("shutdown")
@@ -96,8 +91,6 @@ async def transform(request: TransformRequest, req: Request):
     4. LLM extraction (single call)
     5. Post-processing
     """
-    await validate_api_key(req)
-    
     start_time = time.time()
     logger.info(f"_pipeline_start - request_id={id(request)}")
     
@@ -320,22 +313,9 @@ async def root():
         "description": "Context structuring API for AI agents",
         "endpoints": {
             "transform": "POST /v1/transform",
-            "health": "GET /health",
-            "usage": "GET /v1/usage"
+            "health": "GET /health"
         }
     }
-
-
-@app.get("/v1/usage")
-async def get_usage(request: Request):
-    """Get usage statistics (requires API key)"""
-    api_key = await validate_api_key(request)
-    
-    if not api_key:
-        return {"message": "API key not required"}
-    
-    stats = get_usage_stats(api_key)
-    return stats
 
 
 if __name__ == "__main__":
