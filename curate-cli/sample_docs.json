@@ -1,0 +1,10 @@
+[
+  {
+    "id": "doc1",
+    "content": "Subject: Project Alpha Update - May 2026\n\nHi Team,\n\nHere are the key updates for Project Alpha:\n1. The frontend design is now 80% complete.\n2. We need to schedule a code review for the API implementation by next Friday.\n3. Sarah is finalizing the documentation for the onboarding flow.\n\nPlease ensure all tasks are logged in the project board.\n\nBest,\nRayhan"
+  },
+  {
+    "id": "doc2",
+    "content": "Meeting Minutes - May 1st\n\nAttendees: Sarah, John, Rayhan\n\nAction Items:\n- Sarah: Finalize onboarding docs by Tuesday.\n- John: Fix the bug in the login flow.\n- Rayhan: Update the implementation plan for the n8n integration."
+  }
+]
