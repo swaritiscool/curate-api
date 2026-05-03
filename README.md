@@ -327,7 +327,7 @@ Focus on the core transform until it's bulletproof.
 
 ## License
 
-MIT
+Learning License
 
 ## Contributing
 
