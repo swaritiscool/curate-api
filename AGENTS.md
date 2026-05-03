@@ -14,7 +14,7 @@ Curate.ai is a **document transformation API** for AI agents. It takes messy mul
 
 ```
 /home/imperinovus/Projects/API-Tools/Curate/
-├── main.py                      # FastAPI app, /v1/transform endpoint
+├── main.py                      # FastAPI app, /v1/transform, /v1/compress endpoints
 ├── requirements.txt             # Python dependencies
 ├── .env                         # LLM_API_KEY, OLLAMA_BASE_URL=ollama-cloud
 ├── .env.example                 # Template for .env
@@ -32,7 +32,7 @@ Curate.ai is a **document transformation API** for AI agents. It takes messy mul
 │   ├── summary_v1.json
 │   └── entities_v1.json
 │
-├── tests/                       # 49 passing tests
+├── tests/                       # 61 passing tests
 │   ├── test_chunker.py
 │   ├── test_filter.py
 │   ├── test_ranker.py
@@ -40,6 +40,7 @@ Curate.ai is a **document transformation API** for AI agents. It takes messy mul
 │   ├── test_postprocess.py
 │   ├── test_endpoint.py
 │   ├── test_integration.py
+│   ├── test_compress.py
 │   └── conftest.py              # Fixtures, mocks main.call_llm
 │
 ├── docs.md                      # API documentation (for humans)
@@ -63,6 +64,20 @@ POST /v1/transform
 4. extractor.call_llm() → JSON response (minimax-m2.5 via Ollama Cloud)
     ↓
 5. postprocess.build_response() → final API response
+```
+
+## Compress Endpoint (Stages 1-3 Only)
+
+```
+POST /v1/compress
+    ↓
+1. chunker.chunk_documents() → List[chunk_with_doc_id, chunk_id, position, text, token_count]
+    ↓
+2. filter.prefilter_chunks_with_stats() → filtered_chunks, tokens_before, tokens_after, reduction_pct
+    ↓
+3. ranker.rank_chunks() → top 15 chunks by relevance
+    ↓
+Returns ranked chunks as plain text JSON (no LLM call)
 ```
 
 ## Key Files to Modify
@@ -155,7 +170,7 @@ source venv/bin/activate
 python -m pytest tests/ -v
 ```
 
-Must have **49 passing tests**.
+Must have **61 passing tests**.
 
 **Test file purposes:**
 - `test_chunker.py` - Chunking logic, provenance tags
@@ -165,6 +180,7 @@ Must have **49 passing tests**.
 - `test_postprocess.py` - Dedup, normalization, validation
 - `test_endpoint.py` - API endpoint behavior (mocked LLM)
 - `test_integration.py` - Full pipeline integration
+- `test_compress.py` - /v1/compress endpoint tests (no LLM)
 
 **Mocking pattern** (critical for endpoint tests):
 
@@ -269,7 +285,10 @@ MODEL_ENTITIES=qwen3.5
 - [ ] Improve BM25 threshold auto-tuning
 - [ ] Add async batch processing (target: 0.7-1.3s LLM time with batching) (target: 0.7-1.3s LLM time with batching)
 
-## Recent Changes (2026-05-01)
+## Recent Changes (2026-05-03)
+
+### New Endpoint Added:
+- **POST /v1/compress**: Runs pipeline stages 1-3 only (chunk → filter → rank). Returns ranked chunks as plain text JSON. No LLM call, no Ollama dependency.
 
 ### Optimizations Completed:
 1. **Early Exit for Small Docs**: Skip BM25 filtering for documents with <500 tokens (saves 5-25ms)
@@ -279,18 +298,14 @@ MODEL_ENTITIES=qwen3.5
 5. **Connection Pooling**: Reusable httpx client with connection pooling (50-100ms savings)
 
 ### Files Modified:
-- `pipeline/extractor.py` - Model selection, trimmed prompts, httpx client reuse
-- `pipeline/filter.py` - BM25 scoring with cached regex patterns
-- `pipeline/chunker.py` - Token caching, regex pre-compilation
-- `pipeline/ranker.py` - heapq.nlargest(), score reuse, regex pre-compilation
-- `main.py` - Early exit, dynamic thresholds, model usage
-- `tests/test_extractor.py` - Updated prompt tests
-- `.env`, `.env.example` - Model configuration template
+- `main.py` - Added /v1/compress endpoint
+- `schemas/models.py` - Added CompressResponse, CompressChunk, CompressMeta models
+- `tests/test_compress.py` - New test file with 13 tests
 - `AGENTS.md` - This file
 
 ### Performance Results:
 - **Small docs (<500 tokens)**: 85%+ pipeline time reduction (~8-15s → ~1.4-1.8s)
-- **Tests**: 48 passed, 1 skipped
+- **Tests**: 61 passed, 1 skipped
 - **LLM Time**: Currently 1.3s-8.3s (target: 0.7-1.3s with batching)
 
 ### Token Reduction Optimization:
@@ -327,6 +342,6 @@ python -c "from main import app; print('OK')"
 
 ---
 
-**Last Updated**: 2026-04-30
-**Tests**: 49 passing
+**Last Updated**: 2026-05-03
+**Tests**: 61 passing
 **LLM**: minimax-m2.5 via Ollama Cloud

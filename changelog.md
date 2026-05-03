@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-05-03
+
+### Added
+- **POST /v1/compress endpoint** - Runs pipeline stages 1-3 only (chunk → filter → rank). Returns filtered, ranked chunks as plain text JSON. No LLM call, no Ollama dependency.
+- **CompressResponse models** - `CompressResponse`, `CompressChunk`, `CompressMeta` in `schemas/models.py`
+- **test_compress.py** - 13 tests for /v1/compress endpoint
+
+### Changed
+- **AGENTS.md** - Updated project structure, test count (61 passing), recent changes
+- **docs.md** - Added /v1/compress documentation with request/response examples
+- **README.md** - Updated test count and project structure
+
 ## 2026-04-30
 
 ### Added

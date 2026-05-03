@@ -215,7 +215,7 @@ See [TOKEN_REDUCTION.md](TOKEN_REDUCTION.md) for details.
 
 ```
 curate-ai/
-├── main.py                 # FastAPI app + route handlers
+├── main.py                 # FastAPI app + route handlers (/v1/transform, /v1/compress)
 ├── pipeline/
 │   ├── chunker.py          # Document chunking with provenance
 │   ├── filter.py           # BM25 pre-filtering + stats
@@ -235,6 +235,7 @@ curate-ai/
 │   ├── test_postprocess.py
 │   ├── test_endpoint.py
 │   ├── test_integration.py
+│   ├── test_compress.py
 │   └── conftest.py
 ├── test_inputs/            # Sample request payloads
 ├── requirements.txt
@@ -260,7 +261,7 @@ python measure_reduction.py
 
 **Test Results:**
 ```
-============================== 49 passed in 0.71s ==============================
+============================================================== 61 passed in 0.57s ==============================================================
 ```
 
 ## Configuration

@@ -82,6 +82,82 @@ Transform documents into structured JSON.
 | `meta.tokens_after_filter` | number | Tokens after filtering |
 | `meta.reduction_pct` | number | Percentage reduction (60-80% optimal) |
 
+### POST /v1/compress
+
+Compress documents by running pipeline stages 1-3 only (chunk → filter → rank). Returns filtered, ranked chunks as plain text. No LLM call.
+
+**Request Body:** (identical to /v1/transform)
+```json
+{
+  "documents": [
+    {
+      "id": "doc1",
+      "content": "Your document text here..."
+    }
+  ],
+  "task": "extract tasks with deadlines and priorities",
+  "schema": "tasks_v1"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "status": "success",
+  "chunks": [
+    {
+      "chunk_id": "doc1_chunk_4",
+      "doc_id": "doc1",
+      "position": 4,
+      "content": "Marcus needs to send the calendar invite for the QA sync by end of this week.",
+      "score": 0.84,
+      "doc_type": "task",
+      "tokens": 156
+    }
+  ],
+  "meta": {
+    "chunks_returned": 12,
+    "tokens_before_filter": 11829,
+    "tokens_after_filter": 2547,
+    "reduction_pct": 78.4,
+    "docs_processed": 3,
+    "processing_time_ms": 340
+  }
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | `success` or `error` |
+| `chunks` | array | Ranked chunks (no LLM extraction) |
+| `chunks[].chunk_id` | string | Chunk identifier (doc_id_chunk_N) |
+| `chunks[].doc_id` | string | Source document ID |
+| `chunks[].position` | number | Chunk position in document |
+| `chunks[].content` | string | Raw chunk text (unchanged) |
+| `chunks[].score` | number | BM25 relevance score (2 decimal places) |
+| `chunks[].doc_type` | string | `task` or `reference` |
+| `chunks[].tokens` | number | Token count for this chunk |
+| `meta` | object | Processing metadata |
+| `meta.chunks_returned` | number | Number of chunks returned |
+| `meta.tokens_before_filter` | number | Tokens before BM25 filtering |
+| `meta.tokens_after_filter` | number | Tokens after filtering |
+| `meta.reduction_pct` | number | Percentage reduction |
+| `meta.docs_processed` | number | Documents processed |
+| `meta.processing_time_ms` | number | Total processing time |
+
+**Rules:**
+- Chunks ordered by score descending (highest relevance first)
+- Content is raw text exactly as it appears in source (no modification)
+- No LLM call is made
+- No Ollama dependency
+
+**Use cases:**
+- Debugging BM25 filtering behavior
+- Building custom extraction pipelines
+- Quick document triage without LLM cost
+
 ### GET /health
 
 Health check endpoint.

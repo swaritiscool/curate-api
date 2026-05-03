@@ -28,7 +28,8 @@ from schemas.models import (
     TaskResponse,
     SummaryResponse,
     EntityResponse,
-    Priority
+    Priority,
+    CompressResponse
 )
 from pipeline.chunker import chunk_documents, count_tokens, count_chunks_tokens
 from pipeline.filter import prefilter_chunks_with_stats
@@ -295,7 +296,133 @@ async def transform(request: TransformRequest, req: Request):
         logger.info(f"pipeline_summary - total_time={processing_time:.3f}s tokens={total_tokens} chunks={len(ranked_chunks)} reduction_pct={reduction_pct:.1f}% request_id={id(request)}")
         
         return response
-        
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={"code": ErrorCode.PROCESSING_ERROR, "message": f"Processing failed: {str(e)}"}
+        )
+
+
+@app.post("/v1/compress", response_model=CompressResponse)
+async def compress(request: TransformRequest):
+    """
+    Compress documents by running pipeline stages 1-3 only (chunk → filter → rank).
+    Returns filtered, ranked chunks as plain text. No LLM call.
+    """
+    start_time = time.time()
+    logger.info(f"compress_start - request_id={id(request)}")
+
+    if len(request.documents) > MAX_DOCUMENTS:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": ErrorCode.DOCUMENT_LIMIT, "message": f"Maximum {MAX_DOCUMENTS} documents allowed per request"}
+        )
+
+    if not request.documents:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": ErrorCode.EMPTY_DOCUMENT, "message": "At least one document required"}
+        )
+
+    for doc in request.documents:
+        if not doc.content.strip():
+            raise HTTPException(
+                status_code=400,
+                detail={"code": ErrorCode.EMPTY_DOCUMENT, "message": "Document content cannot be empty"}
+            )
+        if count_tokens(doc.content) > MAX_DOC_TOKENS:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": ErrorCode.DOCUMENT_LIMIT, "message": f"Document exceeds {MAX_DOC_TOKENS} token limit"}
+            )
+
+    try:
+        docs_as_dicts = [{"id": str(doc.id), "content": str(doc.content)} for doc in request.documents]
+
+        from pipeline.chunker import classify_doc_type
+        for doc in docs_as_dicts:
+            doc_type = classify_doc_type(doc['content'])
+            doc['doc_type'] = doc_type
+
+        all_chunks = chunk_documents(docs_as_dicts, chunk_size=256, overlap=50)
+
+        if not all_chunks:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": ErrorCode.EMPTY_DOCUMENT, "message": "No valid content found in documents"}
+            )
+
+        tokens_before = count_chunks_tokens(all_chunks)
+
+        total_tokens_before_check = count_chunks_tokens(all_chunks)
+        if total_tokens_before_check < 500:
+            filtered_chunks = all_chunks
+            tokens_before = total_tokens_before_check
+            tokens_after = total_tokens_before_check
+            reduction_pct = 0.0
+        else:
+            doc_count = len(request.documents)
+            if doc_count <= 2:
+                bm25_threshold = 1.5
+            elif doc_count <= 5:
+                bm25_threshold = 2.5
+            else:
+                bm25_threshold = 3.0
+
+            filtered_chunks, tokens_before, tokens_after, reduction_pct = prefilter_chunks_with_stats(
+                all_chunks,
+                request.task,
+                bm25_threshold=bm25_threshold,
+                min_tokens=30
+            )
+
+        ranked_chunks = rank_chunks(
+            filtered_chunks,
+            request.task,
+            request.schema_type,
+            top_n=TOP_CHUNKS_TO_LLM
+        )
+
+        from pipeline.ranker import select_top_chunks_per_doc
+        doc_list = [{"id": str(doc.id), "content": str(doc.content), "token_count": count_tokens(str(doc.content))}
+                    for doc in request.documents]
+        top_chunks = select_top_chunks_per_doc(ranked_chunks, doc_list, total_budget=TOP_CHUNKS_TO_LLM)
+
+        tokens_after = count_chunks_tokens(top_chunks)
+        if tokens_before > 0:
+            reduction_pct = round((1 - tokens_after / tokens_before) * 100, 1)
+
+        processing_time_ms = int((time.time() - start_time) * 1000)
+
+        chunks_sorted = sorted(top_chunks, key=lambda x: x.get('_score', 0), reverse=True)
+
+        return {
+            "status": "success",
+            "chunks": [
+                {
+                    "chunk_id": f"{c.get('doc_id')}_chunk_{c.get('chunk_id')}",
+                    "doc_id": c.get("doc_id"),
+                    "position": c.get("position"),
+                    "content": c.get("text"),
+                    "score": round(c.get("_score", 0), 2),
+                    "doc_type": c.get("doc_type", "task"),
+                    "tokens": c.get("token_count", 0)
+                }
+                for c in chunks_sorted
+            ],
+            "meta": {
+                "chunks_returned": len(chunks_sorted),
+                "tokens_before_filter": tokens_before,
+                "tokens_after_filter": tokens_after,
+                "reduction_pct": reduction_pct,
+                "docs_processed": len(request.documents),
+                "processing_time_ms": processing_time_ms
+            }
+        }
+
     except HTTPException:
         raise
     except Exception as e:

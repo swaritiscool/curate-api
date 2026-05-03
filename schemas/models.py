@@ -68,6 +68,31 @@ class EntityResponse(BaseModel):
     meta: Meta
 
 
+class CompressChunk(BaseModel):
+    chunk_id: str
+    doc_id: str
+    position: int
+    content: str
+    score: float
+    doc_type: str
+    tokens: int
+
+
+class CompressMeta(BaseModel):
+    chunks_returned: int
+    tokens_before_filter: int
+    tokens_after_filter: int
+    reduction_pct: float
+    docs_processed: int
+    processing_time_ms: int
+
+
+class CompressResponse(BaseModel):
+    status: Literal["success", "error"]
+    chunks: List[CompressChunk]
+    meta: CompressMeta
+
+
 class Document(BaseModel):
     id: str
     content: str
