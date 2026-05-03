@@ -39,7 +39,7 @@ SMALL_TEXT = "This is a small document with just a few words."
 LARGE_TEXT = """Document 1: Technical Overview
 This is a longer document that contains technical documentation about the system architecture. 
 It covers various components like Kubernetes, Docker, microservices, and deployment strategies.
-The document also mentions API endpoints, authentication, and authorization mechanisms.
+The document also mentions API endpoints and system integration.
 
 Document 2: Meeting Notes
 Meeting Minutes: Team Sync
@@ -47,7 +47,7 @@ Participants: John, Jane, Bob
 Date: 2026-04-28
 
 Action Items:
-1. John needs to complete the API documentation
+1. John needs to complete the system documentation
 2. Jane should update the deployment guide
 3. Bob will review the architecture diagrams
 
@@ -55,13 +55,13 @@ Document 3: Task List
 - Fix critical bug in production
 - Deploy new version by end of week
 - Schedule follow-up meeting for next Monday
-- Review security audit findings
+- Review performance audit findings
 
 Document 4: Reference Material
 The system uses Kubernetes for orchestration. 
 Each service runs in its own container.
-API gateway handles authentication and rate limiting.
-Database is PostgreSQL with read replicas.
+API gateway handles request routing.
+Storage is distributed across nodes.
 """
 
 async def benchmark_pipeline():

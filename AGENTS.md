@@ -15,7 +15,6 @@ Curate.ai is a **document transformation API** for AI agents. It takes messy mul
 ```
 /home/imperinovus/Projects/API-Tools/Curate/
 ├── main.py                      # FastAPI app, /v1/transform endpoint
-├── auth.py                      # Simplified error codes (auth removed)
 ├── requirements.txt             # Python dependencies
 ├── .env                         # LLM_API_KEY, OLLAMA_BASE_URL=ollama-cloud
 ├── .env.example                 # Template for .env

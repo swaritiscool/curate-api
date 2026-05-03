@@ -216,7 +216,6 @@ See [TOKEN_REDUCTION.md](TOKEN_REDUCTION.md) for details.
 ```
 curate-ai/
 ├── main.py                 # FastAPI app + route handlers
-├── auth.py                 # API key auth + rate limiting
 ├── pipeline/
 │   ├── chunker.py          # Document chunking with provenance
 │   ├── filter.py           # BM25 pre-filtering + stats

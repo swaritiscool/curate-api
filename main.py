@@ -39,7 +39,7 @@ from pipeline.postprocess import (
     validate_against_schema,
     build_response
 )
-from auth import ErrorCode
+from schemas.errors import ErrorCode
 
 app = FastAPI(
     title="Curate.ai",

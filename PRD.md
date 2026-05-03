@@ -77,11 +77,9 @@ Multi-doc + schemas
     Task-specific ranking rules
 
 Day 4
-Make it real
+Final Polish
 
-    API key auth (Bearer)
     Usage logging
-    Rate limiting
     Error codes + messages
 
 What kills this
